@@ -9,6 +9,11 @@ class PhoneNumberFormat(Enum):
     NATIONAL = 2, "NATIONAL"
     RFC3966 = 3, "RFC3966"
 
+    def __iter__(self):
+        """this works around a pycharm issue PY-30216
+        https://youtrack.jetbrains.com/issue/PY-30216/Enum-type-from-enum-backport-is-not-recognized-as-iterable"""
+        super().__iter__(self)
+
     def __str__(self):
         return self.string
 
@@ -20,6 +25,10 @@ class PhoneNumberFormat(Enum):
                 return member
             if member.string == value:
                 return member
+
+
+# this works around a pycharm issue PY-30216
+# PhoneNumberFormat = PhoneNumberFormat  # type: typing.Union[typing.Type[PhoneNumberFormat], typing.Iterable]
 
 
 NAMED_NUMBER_FORMATS = [

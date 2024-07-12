@@ -1,40 +1,40 @@
 """
 
 
-        Country Codes are the numerical prefix in the phone number for routing calls.
-        Region Codes are the ISO 3166-1 alpha 2 character abbreviations that refer to a country.
+Country Codes are the numerical prefix in the phone number for routing calls.
+Region Codes are the ISO 3166-1 alpha 2 character abbreviations that refer to a country.
 
-        NOTE: National trunk prefix not being a feature of all regions and regions having variation in
-            their known number patterns, such as many not having shared cost number formats,
-            means we need a slightly complicated method to control exclusion and inclusion as
-            its necessary to distinguish between allowing or excluding it in the output,
-            and specifically limiting the search space to only generate numbers from
-            regions where it is possible to generate this kind of number.
+NOTE: National trunk prefix not being a feature of all regions and regions having variation in
+    their known number patterns, such as many not having shared cost number formats,
+    means we need a slightly complicated method to control exclusion and inclusion as
+    its necessary to distinguish between allowing or excluding it in the output,
+    and specifically limiting the search space to only generate numbers from
+    regions where it is possible to generate this kind of number.
 
-        number_formats is a dictionary containing the names of various number formats
-            and a value of True, False or None, to control their inclusion in the output.
-                True indicates we want these in the output and will limit the strategy to
-                    regions that have the named number format.
-                False indicates we do not want these in the output,
-                None indicates these can be generated when available, and we will not limit the region list.
+number_formats is a dictionary containing the names of various number formats
+    and a value of True, False or None, to control their inclusion in the output.
+        True indicates we want these in the output and will limit the strategy to
+            regions that have the named number format.
+        False indicates we do not want these in the output,
+        None indicates these can be generated when available, and we will not limit the region list.
 
-        E.123 international notation prefixes are '+' followed by the country code such as 1, or 61,
-                True indicates we want these in the output,
-                False indicates we do not want these in the output,
-                None indicates we will accept the default of True
+E.123 international notation prefixes are '+' followed by the country code such as 1, or 61,
+        True indicates we want these in the output,
+        False indicates we do not want these in the output,
+        None indicates we will accept the default of True
 
-        National number prefixes are what is used to indicate that the number being dialed includes an area code,
-            in most countries this is just '0'
-                True indicates we want these in the output and will limit the strategy to
-                    regions that have trunk prefixes.
-                False indicates we do not want these in the output,
-                None indicates these can be generated when available, and we will not limit the region list.
+National number prefixes are what is used to indicate that the number being dialed includes an area code,
+    in most countries this is just '0'
+        True indicates we want these in the output and will limit the strategy to
+            regions that have trunk prefixes.
+        False indicates we do not want these in the output,
+        None indicates these can be generated when available, and we will not limit the region list.
 
-        Local numbers without prefixes are the simplest format of phone number.
-                True indicates we want these in the output,
-                False indicates we do not want these in the output,
-                None indicates we will accept the default of True
-        """
+Local numbers without prefixes are the simplest format of phone number.
+        True indicates we want these in the output,
+        False indicates we do not want these in the output,
+        None indicates we will accept the default of True
+"""
 
 from typing import Iterable, List, Optional, Union
 
@@ -48,21 +48,24 @@ from hypothesis.strategies._internal.strategies import Ex
 
 # noinspection PyProtectedMember
 from hypothesis.strategies._internal.utils import defines_strategy
-from phonenumbers import COUNTRY_CODE_TO_REGION_CODE, SUPPORTED_REGIONS, PhoneMetadata
+from phonenumbers import (
+    COUNTRY_CODE_TO_REGION_CODE,
+    SUPPORTED_REGIONS,
+    PhoneMetadata,
+    PhoneNumber,
+    format_number,
+    parse,
+)
 
-from hypothesis_phonenumbers.data import NAMED_NUMBER_FORMATS, PhoneNumberRegion, RegionalNamedFormat
+from hypothesis_phonenumbers.data import NAMED_NUMBER_FORMATS, PhoneNumberFormat, PhoneNumberRegion, RegionalNamedFormat
 
+NUMBER_FORMATS: List[RegionalNamedFormat] = []
+METADATA_DICT = {}
 PHONE_NUMBER_REGIONS: List[PhoneNumberRegion[int, str]] = []
-for (
-    _k,
-    _v,
-) in COUNTRY_CODE_TO_REGION_CODE.items():
+for _k, _v in COUNTRY_CODE_TO_REGION_CODE.items():
     for _i in _v:
         PHONE_NUMBER_REGIONS.append(PhoneNumberRegion(_k, _i))
 
-NUMBER_FORMATS: List[RegionalNamedFormat] = []
-AVAILABILITY_LISTS = {}
-METADATA_DICT = {}
 
 for __phone_region in PHONE_NUMBER_REGIONS:
     __metadata: PhoneMetadata = PhoneMetadata.metadata_for_region_or_calling_code(
@@ -77,9 +80,6 @@ for __phone_region in PHONE_NUMBER_REGIONS:
     # Known number formats for easier lookup by the strategy.
     for number_format in NAMED_NUMBER_FORMATS:
         if hasattr(__metadata, number_format) and getattr(__metadata, number_format) is not None:
-            if number_format not in AVAILABILITY_LISTS:
-                AVAILABILITY_LISTS[number_format] = []
-            AVAILABILITY_LISTS[number_format].append(__phone_region)
             __data["regexes"][number_format] = getattr(__metadata, number_format).national_number_pattern
             NUMBER_FORMATS.append(
                 RegionalNamedFormat(
@@ -141,7 +141,9 @@ def named_number_formats_from_regions(regions: Iterable[PhoneNumberRegion[int, s
     return __number_formats
 
 
-class PhoneNumberStrategy(SearchStrategy):
+class BasePhoneNumberStrategy(SearchStrategy):
+    regions = PHONE_NUMBER_REGIONS
+    named_number_formats = NAMED_NUMBER_FORMATS
     selected_region: Optional[PhoneNumberRegion] = None
     selected_named_number_format = Optional[str] = None
 
@@ -151,28 +153,23 @@ class PhoneNumberStrategy(SearchStrategy):
         named_number_formats: Optional[List[str]] = None,
     ) -> None:
         super().__init__()
-        if regions is None:
-            self.regions = PHONE_NUMBER_REGIONS
-        else:
+        if regions is not None:
             self.regions = [PhoneNumberRegion(*region) for region in regions]  # Normalize the types.
             for region in self.regions:
                 if region not in PHONE_NUMBER_REGIONS:
                     # This might be a little confusing for tuple inputs
                     raise InvalidArgument(f"Invalid region: {region}")  # NOQA: TRY003
 
-        if named_number_formats is None:
-            self.named_number_formats = NAMED_NUMBER_FORMATS
-        else:
+        if named_number_formats is not None:
             for __name in named_number_formats:
                 if __name not in NAMED_NUMBER_FORMATS:
                     raise InvalidArgument(f"Invalid number format: {__name} in named_number_formats")  # NOQA: TRY003
             self.named_number_formats = named_number_formats
 
-        self.available_formats: List[RegionalNamedFormat] = [
-            _format
-            for _format in NUMBER_FORMATS
-            if _format.region in self.regions and _format.format_name in self.named_number_formats
-        ]
+        self.available_formats = []
+        for _format in NUMBER_FORMATS:
+            if _format.region in self.regions and _format.format_name in self.named_number_formats:
+                self.available_formats.append(_format)
 
     def do_draw(self, data: ConjectureData) -> Ex:
         """
@@ -200,13 +197,44 @@ class PhoneNumberStrategy(SearchStrategy):
 def phone_number(
     *, regions: Optional[Union[List[PhoneNumberRegion], List[tuple]]] = None, number_formats: Optional[List[str]] = None
 ) -> st.SearchStrategy[str]:
-    return PhoneNumberStrategy(
+    return BasePhoneNumberStrategy(
         regions=regions,
         named_number_formats=number_formats,
     )
 
 
-# phonenumbers.format_number(phonenumbers.parse(phone_number(region_codes='AU').example(), 'AU'), phonenumbers.PhoneNumberFormat.INTERNATIONAL)
+class ParsedPhoneNumberStrategy(BasePhoneNumberStrategy):
+    parsed_phone_number: Optional[PhoneNumber] = None
+
+    def do_draw(self, data: ConjectureData) -> Ex:
+        selected_phone_number = super().do_draw(data=data)
+        self.parsed_phone_number: PhoneNumber = parse(selected_phone_number, self.selected_region.region_code)
+        return self.parsed_phone_number
+
+
+class FormattedPhoneNumberStrategy(ParsedPhoneNumberStrategy):
+    def __init__(
+        self,
+        *,
+        regions: Optional[Union[List[PhoneNumberRegion, List[tuple]]]] = None,
+        number_formats: Optional[List[str]] = None,
+        display_formats: Optional[List[PhoneNumberFormat]] = None,
+    ) -> None:
+        super().__init__(regions=regions, named_number_formats=number_formats)
+        if display_formats is not None:
+            self.display_formats = display_formats
+        else:
+            self.display_formats = PhoneNumberFormat
+
+    def do_draw(self, data: ConjectureData) -> Ex:
+        super().do_draw(data=data)
+        selected_format = data.draw(st.sampled_from(self.display_formats))
+        formatted_number = format_number(self.parsed_phone_number, selected_format)
+        return formatted_number
+
+
+# phonenumbers.format_number(
+#   phonenumbers.parse(phone_number(region_codes='AU').example(), 'AU'), phonenumbers.PhoneNumberFormat.INTERNATIONAL)
 # phonenumbers.format_number(phonenumbers.parse(phone_number(region_codes='AU').example(), 'AU'), 0)
 
 # TODO: Dialing Sequence strategy:
